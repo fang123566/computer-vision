@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Raw image dataset (too large for git)
+ASL_Dataset/
+Train/
+Test/
+
+# Original master project (external code)
+Real-time-Vernacular-Sign-Language-Recognition-using-MediaPipe-and-Machine-Learning-master/
+
+# IDE
+.vscode/
+.idea/
