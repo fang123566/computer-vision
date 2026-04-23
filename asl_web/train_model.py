@@ -13,11 +13,25 @@ from sklearn.metrics import accuracy_score, classification_report
 import joblib
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-SAMPLES_PER_CLASS = 200   # per letter; raise to 400+ for higher accuracy
+SAMPLES_PER_CLASS = 200   # per letter from american.csv
 RANDOM_STATE      = 42
-CSV_PATH = os.path.join(os.path.dirname(__file__), "data", "american.csv")
+CSV_PATH  = os.path.join(os.path.dirname(__file__), "data", "american.csv")
 MODEL_OUT = os.path.join(os.path.dirname(__file__), "model.pkl")
 # ───────────────────────────────────────────────────────────────────────────────
+
+
+def normalize_row(row42):
+    """Position- and scale-invariant normalization.
+    Must stay identical to _normalize() in app.py.
+    """
+    wx, wy = row42[0], row42[1]
+    mx, my = row42[18], row42[19]   # landmark 9 = middle finger MCP
+    scale  = max(((mx - wx)**2 + (my - wy)**2) ** 0.5, 1e-6)
+    norm = []
+    for i in range(0, 42, 2):
+        norm.append((row42[i]     - wx) / scale)
+        norm.append((row42[i + 1] - wy) / scale)
+    return norm
 
 print("Loading american.csv …")
 df = pd.read_csv(CSV_PATH, header=None)
@@ -48,7 +62,11 @@ else:
 
 print(f"  Classes: {sorted(df['label'].unique())}")
 
-X = df.iloc[:, :-1].values
+# Apply position/scale normalization so model is robust to hand location & size
+feat_cols = list(range(42))
+print("Normalizing landmark features …")
+norm_vals = np.array([normalize_row(r) for r in df[feat_cols].values])
+X = norm_vals
 y = df["label"].values
 
 X_train, X_test, y_train, y_test = train_test_split(

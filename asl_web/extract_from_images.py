@@ -16,7 +16,7 @@ import mediapipe as mp
 ZIP_PATH      = os.path.join(os.path.dirname(__file__), "..", "..", "..",
                               "Downloads", "ASL_Dataset.zip")
 OUT_CSV       = os.path.join(os.path.dirname(__file__), "data", "user_dataset.csv")
-MAX_PER_CLASS = 100          # images per letter  (100 × 26 = 2600 total)
+MAX_PER_CLASS = 300          # images per letter  (300 × 26 = 7800 total)
 SKIP_LABELS   = {"nothing", "space", "del"}
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,6 @@ def extract_from_bytes(img_bytes):
     if img is None:
         return None
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_rgb = cv2.flip(img_rgb, 1)
     result  = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb))
     if not result.hand_landmarks:
         return None

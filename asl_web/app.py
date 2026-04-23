@@ -31,40 +31,83 @@ _base_options = mp.tasks.BaseOptions(model_asset_buffer=_model_buf)
 _options = mp.tasks.vision.HandLandmarkerOptions(
     base_options=_base_options,
     running_mode=mp.tasks.vision.RunningMode.IMAGE,
-    num_hands=2,                       # detect up to 2 hands
-    min_hand_detection_confidence=0.5,  # lower threshold to catch gesture hand
+    num_hands=2,
+    min_hand_detection_confidence=0.5,
+    min_hand_presence_confidence=0.5,
 )
 _detector = mp.tasks.vision.HandLandmarker.create_from_options(_options)
 
 
-def _hand_area(lm_list):
-    """Bounding-box area of a hand landmark list – bigger = more prominent."""
-    xs = [lm.x for lm in lm_list]
-    ys = [lm.y for lm in lm_list]
-    return (max(xs) - min(xs)) * (max(ys) - min(ys))
+def _hand_reach(lm_list):
+    """Wrist-to-middle-fingertip distance – real gesture hand scores highest."""
+    wrist = lm_list[0]
+    tip   = lm_list[12]  # middle fingertip
+    return ((tip.x - wrist.x)**2 + (tip.y - wrist.y)**2) ** 0.5
+
+
+def _normalize(features):
+    """Position- and scale-invariant normalization of 42-element landmark list.
+    Translates wrist to origin, scales by wrist-to-middle-MCP distance.
+    Must match normalization used in train_model.py.
+    """
+    wx, wy = features[0], features[1]
+    mx, my = features[18], features[19]   # landmark 9 = middle finger MCP
+    scale  = max(((mx - wx)**2 + (my - wy)**2) ** 0.5, 1e-6)
+    norm = []
+    for i in range(0, 42, 2):
+        norm.append((features[i]     - wx) / scale)
+        norm.append((features[i + 1] - wy) / scale)
+    return norm
 
 
 def extract_features(img_bgr):
     """Return (features[42], landmarks[21]) or (None, None) if no hand found.
-    When multiple hands are detected, picks the one with the largest bounding box.
+    Picks the hand with the greatest wrist-to-fingertip reach (real gesture hand).
+    Applies CLAHE preprocessing to handle poor lighting.
     """
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    img_rgb = cv2.flip(img_rgb, 1)          # match training data convention
+    # NOTE: no flip here – raw frame is consistent with training data (american.csv)
+    # Landmark x is flipped in the JSON response so the canvas matches the mirrored video.
+
+    # CLAHE: improve contrast in dark / overexposed conditions
+    lab = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    img_rgb = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2RGB)
+
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-    result = _detector.detect(mp_image)
+    result   = _detector.detect(mp_image)
     if not result.hand_landmarks:
         return None, None
 
-    # Pick the hand with the largest bounding-box area (= the gesture hand)
-    best = max(result.hand_landmarks, key=_hand_area)
+    # Score each candidate: reach × handedness_confidence
+    # (visibility/presence are 0 in IMAGE mode – don't use them)
+    best_score = -1
+    best_hand  = None
+    for i, lm_list in enumerate(result.hand_landmarks):
+        reach = _hand_reach(lm_list)
+        if reach < 0.04:
+            continue
+        hand_conf = result.handedness[i][0].score if result.handedness else 1.0
+        score = reach * hand_conf
+        if score > best_score:
+            best_score = score
+            best_hand  = lm_list
 
-    features  = []
+    if best_hand is None:
+        return None, None
+
+    raw = []
     landmarks = []
-    for lm in best:
-        features.append(lm.x)
-        features.append(lm.y)
-        landmarks.append({"x": float(lm.x), "y": float(lm.y)})
-    return features[:42], landmarks
+    for lm in best_hand:
+        raw.append(lm.x)
+        raw.append(lm.y)
+        # Flip x for canvas display so dots align with the CSS-mirrored video
+        landmarks.append({"x": 1.0 - float(lm.x), "y": float(lm.y)})
+
+    features = _normalize(raw[:42])
+    return features, landmarks
 
 
 def create_app(model_path=None):
