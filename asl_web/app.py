@@ -45,6 +45,14 @@ def _hand_reach(lm_list):
     return ((tip.x - wrist.x)**2 + (tip.y - wrist.y)**2) ** 0.5
 
 
+def _hand_center_score(lm_list):
+    """Center-priority score in [0,1]. Hands near frame center score higher."""
+    cx = sum(lm.x for lm in lm_list) / len(lm_list)
+    cy = sum(lm.y for lm in lm_list) / len(lm_list)
+    dist = ((cx - 0.5) ** 2 + (cy - 0.5) ** 2) ** 0.5
+    return max(0.0, 1.0 - dist / 0.72)
+
+
 def _normalize(features):
     """Position- and scale-invariant normalization of 42-element landmark list.
     Translates wrist to origin, scales by wrist-to-middle-MCP distance.
@@ -81,8 +89,7 @@ def extract_features(img_bgr):
     if not result.hand_landmarks:
         return None, None
 
-    # Score each candidate: reach × handedness_confidence
-    # (visibility/presence are 0 in IMAGE mode – don't use them)
+    # Score each candidate: reach × handedness × center-priority
     best_score = -1
     best_hand  = None
     for i, lm_list in enumerate(result.hand_landmarks):
@@ -90,7 +97,8 @@ def extract_features(img_bgr):
         if reach < 0.04:
             continue
         hand_conf = result.handedness[i][0].score if result.handedness else 1.0
-        score = reach * hand_conf
+        center_score = _hand_center_score(lm_list)
+        score = reach * (0.7 + 0.3 * hand_conf) * (0.55 + 0.45 * center_score)
         if score > best_score:
             best_score = score
             best_hand  = lm_list

@@ -410,7 +410,8 @@ let holdCount     = 0;          // consecutive frames with same letter
 const HOLD_THRESH = 3;          // frames to hold before appending to word
 const CONF_MIN    = 0.35;       // ignore predictions below this confidence
 const SMOOTH_WIN  = 5;          // majority-vote window (frames)
-let predBuffer    = [];         // rolling prediction buffer for smoothing
+const STABLE_MIN  = 0.55;       // minimum vote ratio to accept smoothed output
+let predBuffer    = [];         // rolling prediction buffer for smoothing [{p, c}]
 
 // ── Alphabet grid ─────────────────────────────────────────────────────────────
 "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach(ch => {
@@ -522,12 +523,24 @@ function handleResult(data) {
     return;
   }
 
-  // Smoothing: majority vote over last SMOOTH_WIN frames
-  predBuffer.push(prediction);
+  // Smoothing: confidence-weighted vote over last SMOOTH_WIN frames
+  predBuffer.push({ p: prediction, c: confidence });
   if (predBuffer.length > SMOOTH_WIN) predBuffer.shift();
-  const freq = {};
-  predBuffer.forEach(p => freq[p] = (freq[p]||0) + 1);
-  const stable = Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0];
+  const score = {};
+  predBuffer.forEach(({ p, c }) => {
+    score[p] = (score[p] || 0) + c;
+  });
+  const sorted = Object.entries(score).sort((a, b) => b[1] - a[1]);
+  const stable = sorted[0][0];
+  const totalScore = Object.values(score).reduce((a, b) => a + b, 0) || 1;
+  const stableRatio = sorted[0][1] / totalScore;
+
+  if (stableRatio < STABLE_MIN && predBuffer.length >= 3) {
+    updateLetter("?", confidence, true);
+    setStatus("loading", "手势不稳定，请保持1秒");
+    holdCount = 0;
+    return;
+  }
 
   updateLetter(stable, confidence, false);
 
@@ -571,15 +584,14 @@ function drawHand(lms, conns) {
   conns.forEach(([a, b]) => {
     if (!lms[a] || !lms[b]) return;
     ctx.beginPath();
-    // landmarks.x is from flipped image; mirror back for selfie display
-    ctx.moveTo((1 - lms[a].x) * W, lms[a].y * H);
-    ctx.lineTo((1 - lms[b].x) * W, lms[b].y * H);
+    ctx.moveTo(lms[a].x * W, lms[a].y * H);
+    ctx.lineTo(lms[b].x * W, lms[b].y * H);
     ctx.stroke();
   });
 
   // Joints
   lms.forEach((lm, i) => {
-    const x = (1 - lm.x) * W, y = lm.y * H;
+    const x = lm.x * W, y = lm.y * H;
     ctx.beginPath();
     ctx.arc(x, y, i === 0 ? 6 : 4, 0, Math.PI * 2);
     ctx.fillStyle   = i === 0 ? "#ff7b54" : "#58a6ff";
